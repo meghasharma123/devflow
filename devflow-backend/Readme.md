@@ -43,6 +43,25 @@ Invalid JWT |	401 | 	User is not authenticated
 Valid JWT, but MEMBER accesses ADMIN route |	403 |	User lacks permission
 Valid JWT and ADMIN accesses ADMIN route |	200 |	Access permitted
 
+## Backend Architecture
+
+1. `Routes` [Defines endpoints and middleware] *GET /api/users*
+2. `Controllers` [Handles HTTP request and response] *getUsersController()*
+3. `Services` [Contains business logic] *getUsersService()*
+4. `Repository` [Communicates with the database] *findAllUsers()*
+5. `PostgreSQL`
+
+**Suppose tomorrow we change PostgreSQL to another database. We can change the repository implementation without rewriting our controller or business logic, provided the repository interface remains the same.**
+
+## Backend Pagiation
+
+I would implement server-side pagination to avoid fetching thousands of records at once. The API would accept page and limit query parameters, calculate the offset, and retrieve only the required records. On the frontend, I could use virtualization to render only visible rows and improve UI performance.
+
+The backend calculates the database offset like this => `offset = (page-1)*limit`
+
+I would validate pagination `query parameters` using validation `middleware` [Zod], before the controller executes. The service would handle the pagination business logic, and the repository would execute the database query.
+
+
 
 # Code
 
@@ -53,8 +72,14 @@ npm install express dotenv cors helmet
 npm install -D typescript tsx @types/node @types/express @types/cors
 ```
 3. To configure ts: `npx tsc --init`
-
-
+4. package.json script update:
+```
+"scripts": {
+  "dev": "tsx watch src/server.ts",
+  "build": "tsc",
+  "start": "node dist/server.js"
+}
+```
 
 
 
