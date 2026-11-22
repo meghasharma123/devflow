@@ -1,15 +1,32 @@
 import { Request, Response, NextFunction } from "express";
-import { getAllUsers } from "../services/user.service";
+import { getAllUsers, registerUser } from "../services/user.service";
 
-export function getUsersController(
+export async function getUsersController(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
   try {
-    const data = getAllUsers();
+    const { page, limit } = req.query;
+    const userDetail = await getAllUsers(Number(page) || 1, Number(limit) || 20);
 
-    return res.status(200).json({ success: true, data });
+    return res.status(200).json({ success: true, data:userDetail });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function createUserController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  // Your implementation
+  try {
+    const { name, email } = req.body;
+    const userDetail = await registerUser(name,email);
+
+    return res.status(201).json({success:true,data:userDetail})
   } catch (error) {
     next(error);
   }
