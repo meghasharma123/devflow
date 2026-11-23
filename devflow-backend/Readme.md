@@ -1,15 +1,15 @@
 # Backend
 
-Week	| Topics	| Status
-------|--------|--------
-Week 1 |	Node.js, Express, middleware, routes, controllers, services, APIs, error handling basics |	Completed
-Week 2 |	PostgreSQL, SQL, Prisma, relationships, indexes, migrations, transactions	| Completed
-Week 3 |	Advanced DB, concurrency, isolation, query optimization, pooling	| Partially completed
-Week 4 |	Redis and caching	| Not started
-Week 5 |	Queues and background jobs	| Not started
-Week 6 |	Testing and reliability	| Not started
-Week 7 |	System design and scalability	| Not started
-Week 8 |	Docker, deployment and production	| Not started
+| Week   | Topics                                                                                   | Status              |
+| ------ | ---------------------------------------------------------------------------------------- | ------------------- |
+| Week 1 | Node.js, Express, middleware, routes, controllers, services, APIs, error handling basics | Completed           |
+| Week 2 | PostgreSQL, SQL, Prisma, relationships, indexes, migrations, transactions                | Completed           |
+| Week 3 | Advanced DB, concurrency, isolation, query optimization, pooling                         | Partially completed |
+| Week 4 | Redis and caching                                                                        | Not started         |
+| Week 5 | Queues and background jobs                                                               | Not started         |
+| Week 6 | Testing and reliability                                                                  | Not started         |
+| Week 7 | System design and scalability                                                            | Not started         |
+| Week 8 | Docker, deployment and production                                                        | Not started         |
 
 ## Backend Filesystem
 
@@ -376,8 +376,8 @@ Use a unique constraint on the idempotency key in PostgreSQL.
 - PostgreSQL allows only one insert.
 - The other request gets a unique constraint violation.
 - Backend fetches and returns the already-created order.
-  
-*The database guarantees uniqueness even under concurrent requests.*
+
+_The database guarantees uniqueness even under concurrent requests._
 
 Application-level checks alone cannot guarantee uniqueness because two concurrent requests can both pass the check before either inserts the record. A database unique constraint ensures atomic enforcement of uniqueness, even under concurrent requests.
 
@@ -386,6 +386,7 @@ Suppose two users try to book the last available seat at exactly the same time. 
 => Two common approaches
 
 1. Conditional UPDATE (recommended for simple inventory/seat booking)
+
 ```
 UPDATE seats
 SET available = false
@@ -393,9 +394,10 @@ WHERE id = 101 AND available = true;
 ```
 
 2. Row-level locking
-Use SELECT ... FOR UPDATE inside a transaction to lock the seat row while checking and updating it.
+   Use SELECT ... FOR UPDATE inside a transaction to lock the seat row while checking and updating it.
 
 #### What is the N+1 query problem, and how would you solve it?
+
 => The N+1 query problem occurs when we execute one query to fetch records and then additional queries for each record to fetch related data. This creates unnecessary database round trips and impacts performance. I would solve it using Prisma's include or select to fetch related data efficiently.
 
 ex: Suppose you have 100 users, and you want to display each user's organization name.
@@ -404,6 +406,7 @@ ex: Suppose you have 100 users, and you want to display each user's organization
 ### Connection Pooling
 
 If 1,000 requests each create a new database connection:
+
 1. PostgreSQL has to manage too many connections.
 2. Memory and CPU usage increase.
 3. The database may reach its maximum connection limit.
@@ -415,3 +418,130 @@ Connection pooling maintains a reusable set of database connections instead of c
 
 `1,000 API requests -> Connection pool (e.g. 20 connections) -> PostgreSQL`
 
+### Database Isolation Levels
+
+PostgreSQL supports four isolation levels:
+
+| Isolation level  | What it prevents                       |
+| ---------------- | -------------------------------------- |
+| Read Uncommitted | PostgreSQL treats it as Read Committed |
+| Read Committed   | Dirty reads                            |
+| Repeatable Read  | Dirty reads and non-repeatable reads   |
+| Serializable     | Also prevents serialization anomalies  |
+
+| Problem        | Meaning                                                      |
+| -------------- | ------------------------------------------------------------ |
+| Dirty read     | Reading uncommitted data from another transaction            |
+| Non-repeatable | read Reading the same row twice and getting different values |
+| Phantom read   | Repeating a query returns a different set of rows            |
+
+### Deadlock
+
+A deadlock occurs when two or more transactions wait indefinitely for resources locked by each other.
+
+#### How PostgreSQL handles it
+
+PostgreSQL has a `deadlock detector`.
+
+1. It detects the circular waiting condition.
+2. It chooses one transaction as the victim.
+3. It aborts that transaction and rolls it back.
+4. The other transaction can continue.
+
+How can we prevent deadlocks?
+
+- Always acquire database locks in a consistent order.
+- Keep transactions short.
+- Avoid unnecessary locks.
+- Implement retry logic for deadlock errors.
+
+1. **Optimistic locking**
+   We assume conflicts are rare. We don't lock the row while reading it. Instead, we check whether the data changed before updating it.
+   ex:
+
+```
+UPDATE products
+SET stock = 5, version = version + 1
+WHERE id = 101 AND version = 2;
+```
+
+If another transaction already updated the version, this query affects 0 rows. We detect the conflict and retry or return an error.
+
+2. **Pessimistic locking**
+   We assume conflicts may happen, so we lock the row before modifying it.
+   ex:
+
+```
+BEGIN;
+
+SELECT * FROM products
+WHERE id = 101
+FOR UPDATE;
+
+UPDATE products
+SET stock = 5
+WHERE id = 101;
+
+COMMIT;
+```
+
+Q. Suppose an API takes 5 seconds to fetch 10,000 users from PostgreSQL. What would you investigate first to identify the bottleneck?
+=> What would I investigate?
+
+1. Query execution plan: Use `EXPLAIN ANALYZE` to understand how PostgreSQL executes the query.
+2. Indexes: Check whether frequently filtered or sorted columns have appropriate indexes.
+3. Full table scan: Check whether PostgreSQL is scanning unnecessary rows.
+4. Joins: Check whether joins are inefficient.
+5. Data volume: Are we fetching 10,000 records when the frontend only needs 20?
+
+```
+EXPLAIN ANALYZE
+SELECT *
+FROM "User"
+WHERE name = 'Megha';
+```
+
+- EXPLAIN shows the planned execution.
+- ANALYZE executes the query and reports actual execution statistics.
+
+1. **Index Scan**
+   PostgreSQL uses an index (typically a B-tree) to locate matching rows instead of checking every row.
+
+```
+SELECT * FROM "User"
+WHERE email = 'megha@gmail.com';
+```
+
+2. **Sequential Scan**
+   PostgreSQL scans the table's rows one by one to find matching records.
+
+_Important: Sequential scan isn't always bad. For small tables or queries returning a large percentage of rows, it can be faster than an index scan._
+
+### Cursor vs Offset Pagination
+
+**Offset pagination**: This fetches 20 records after skipping the first 100.
+
+```
+SELECT * FROM "User"
+ORDER BY id
+LIMIT 20 OFFSET 100;
+```
+
+**Cursor-based pagination**: Instead of skipping rows, we remember the last record's position.
+
+```
+SELECT *
+FROM "User"
+WHERE id > 'last_seen_id'
+ORDER BY id
+LIMIT 20;
+```
+
+| Offset pagination                                  | Cursor pagination                                   |
+| -------------------------------------------------- | --------------------------------------------------- |
+| Uses LIMIT + OFFSET                                | Uses a cursor                                       |
+| Large offsets can be slow                          | Efficient for deep pagination with a suitable index |
+| Records inserted before the offset can shift pages | More stable when navigating forward                 |
+| Good for small datasets                            | Good for large datasets and feeds                   |
+
+**One important detail: use a stable, indexed cursor, often a combination of createdAt and id, to handle records with identical timestamps.**
