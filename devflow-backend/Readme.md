@@ -1,15 +1,15 @@
 # Backend
 
-| Week   | Topics                                                                                   | Status              |
-| ------ | ---------------------------------------------------------------------------------------- | ------------------- |
-| Week 1 | Node.js, Express, middleware, routes, controllers, services, APIs, error handling basics | Completed           |
-| Week 2 | PostgreSQL, SQL, Prisma, relationships, indexes, migrations, transactions                | Completed           |
-| Week 3 | Advanced DB, concurrency, isolation, query optimization, pooling                         | Partially completed |
-| Week 4 | Redis and caching                                                                        | Not started         |
-| Week 5 | Queues and background jobs                                                               | Not started         |
-| Week 6 | Testing and reliability                                                                  | Not started         |
-| Week 7 | System design and scalability                                                            | Not started         |
-| Week 8 | Docker, deployment and production                                                        | Not started         |
+| Week   | Topics                                                                                   | Status      |
+| ------ | ---------------------------------------------------------------------------------------- | ----------- |
+| Week 1 | Node.js, Express, middleware, routes, controllers, services, APIs, error handling basics | Completed   |
+| Week 2 | PostgreSQL, SQL, Prisma, relationships, indexes, migrations, transactions                | Completed   |
+| Week 3 | Advanced DB, concurrency, isolation, query optimization, pooling                         | Completed   |
+| Week 4 | Redis and caching                                                                        | -----       |
+| Week 5 | Queues and background jobs                                                               | Not started |
+| Week 6 | Testing and reliability                                                                  | Not started |
+| Week 7 | System design and scalability                                                            | Not started |
+| Week 8 | Docker, deployment and production                                                        | Not started |
 
 ## Backend Filesystem
 
@@ -545,3 +545,162 @@ LIMIT 20;
 | Good for small datasets                            | Good for large datasets and feeds                   |
 
 **One important detail: use a stable, indexed cursor, often a combination of createdAt and id, to handle records with identical timestamps.**
+
+## Redis and Caching
+
+Redis is an `in-memory data store` commonly used as a `cache, message broker and temporary data store`.
+
+Why is Redis fast?
+
+- Data is primarily accessed from RAM.
+- It avoids repeated database queries.
+- It supports efficient data structures.
+- It reduces database workload.
+  Redis can also persist data using snapshots and append-only files, so it isn't strictly limited to temporary data.
+
+Q1. Suppose our DevFlow application has 10,000 users. Every user frequently requests the same organization details. Why would Redis be a better choice than querying PostgreSQL for every request?
+
+=> Redis is a good choice because frequently accessed organization data can be cached in memory. Instead of querying PostgreSQL repeatedly for the same data, the application can serve cache hits directly from Redis. This `reduces database load, query execution overhead, and response latency`.
+
+```
+const cachedOrg = await redis.get("org:123");
+
+if (cachedOrg) {
+  return JSON.parse(cachedOrg);
+}
+
+const org = await prisma.organization.findUnique({
+  where: { id: "123" },
+});
+
+if (org) {
+  await redis.set("org:123", JSON.stringify(org));
+}
+
+return org;
+```
+
+Q2. Suppose an organization changes its name in PostgreSQL, but Redis still contains the old name. What problem will users face, and how can we solve it?
+
+=> This problem is called `cache invalidation` or `stale cache`. Techniques to solve this:
+
+1. Invalidate Redis cache
+   When an organization is updated in PostgreSQL, delete its old cached entry from Redis.
+
+```
+await prisma.organization.update({
+  where: { id: "123" },
+  data: { name: "New Organization" },
+});
+
+// Invalidate old cached data
+await redis.del("org:123");
+```
+
+2. TTL (Time To Live)
+   Set an expiration time on cached data.
+
+```
+await redis.set(
+  "org:123",
+  JSON.stringify(org),
+  "EX",
+  300
+);
+```
+
+Here, 300 means the cache expires after 5 minutes.
+
+Important distinction:
+
+- Cache invalidation: actively removes stale data.
+- TTL: automatically expires cached data after a fixed period.
+
+Q3. Suppose 100 users request the same organization details simultaneously. Redis is initially empty. Will all 100 requests query PostgreSQL, or will only one request query PostgreSQL? Why?
+
+=> This is called a `Cache Stampede` (or `Thundering Herd`). We can use a Redis lock so only one request fetches the data from PostgreSQL.
+Cache stampede prevention
+
+1. Request checks Redis → cache miss.
+2. One request acquires a Redis lock.
+3. That request fetches data from PostgreSQL and updates Redis.
+4. Other requests wait briefly and check Redis again.
+5. They receive the cached data.
+
+```
+const lock = await redis.set(
+  "lock:org:123",
+  "1",
+  "EX",
+  10,
+  "NX"
+);
+```
+
+- NX: Set the lock only if it doesn't exist.
+- EX 10: Lock expires after 10 seconds.
+  Production code also needs safe lock release and handling if the lock holder fails.
+
+Q4. Suppose DevFlow has these requirements:
+
+1. Store user session information.
+2. Cache frequently accessed organization details.
+3. Count how many API requests a user makes per minute.
+   Which Redis data structure would you choose for each requirement?
+
+=> It will be like the following:
+
+| Requirement             | Recommended Redis structure | Why?                           |
+| ----------------------- | --------------------------- | ------------------------------ |
+| 1. User session         | String or Hash              | Store session data             |
+| 2. Organization details | String or Hash              | Store cached organization data |
+| 3. API request counter  | String or Hash              | Increment request counts       |
+
+```
+await redis.hSet("session:123", {
+  userId: "user1",
+  role: "ADMIN"
+});
+
+await redis.set("org:123", JSON.stringify({
+  name: "Google",
+  role: "ADMIN"
+}));
+
+await redis.incr("requests:user1");
+```
+
+_Redis INCR atomically increments a number, which is useful for rate limiting._
+
+Q5. Suppose a user is allowed only 100 API requests per minute. How would you use Redis to implement this rate limiter?
+
+=> This is done by incr and expire
+
+```
+const key = `requests:{userId}`
+
+const count = await redis.incr(key)
+
+if(count === 1){
+  await redis.expire(key,60);
+}
+
+if(count>100){
+  return res.status(429).json({
+    message:"Too many requests. Try again later"
+  })
+}
+
+next();
+```
+*Important: In production, INCR and setting the expiry should be made atomic using a Lua script or another atomic approach. Otherwise, a failure between the two commands could leave a counter without expiry.*
+
+Q6. Why do we use INCR instead of doing this?
+```
+const count = await redis.get(key);
+await redis.set(key, Number(count) + 1);
+```
+=> It may stuck in race condition like before seting 5 let say 8 excuted and now 6 excuted. This is called a `Race Condition` or `Lost Update Problem`. Redis executes INCR `atomically`. Each increment is processed without another increment interfering with it.
+
+
+
