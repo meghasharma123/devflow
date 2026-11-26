@@ -693,14 +693,90 @@ if(count>100){
 
 next();
 ```
-*Important: In production, INCR and setting the expiry should be made atomic using a Lua script or another atomic approach. Otherwise, a failure between the two commands could leave a counter without expiry.*
+
+_Important: In production, INCR and setting the expiry should be made atomic using a Lua script or another atomic approach. Otherwise, a failure between the two commands could leave a counter without expiry._
 
 Q6. Why do we use INCR instead of doing this?
+
 ```
 const count = await redis.get(key);
 await redis.set(key, Number(count) + 1);
 ```
+
 => It may stuck in race condition like before seting 5 let say 8 excuted and now 6 excuted. This is called a `Race Condition` or `Lost Update Problem`. Redis executes INCR `atomically`. Each increment is processed without another increment interfering with it.
 
+#### Practical
+
+To connect with redis server use this command in linux: `redis-cli -h 127.0.0.1 -p 6379 ping`
+Command to see prisma table `npx prisma studio`
+
+### Graceful Degradation
+
+If Redis goes down, our application should continue serving requests using PostgreSQL, although responses may be slower. Redis should improve performance, not become a single point of failure.
+
+### Hot Data Caching
+
+We generally cache frequently accessed data rather than blindly caching everything.
+
+**Redis doesn't necessarily become slow just because it stores more data, but limited memory can cause eviction and increased operational costs.**
+
+### Redis Cache Eviction Policies
+
+1. LRU — Least Recently Used
+2. LFU — Least Frequently Used
+3. Random Eviction
+
+| Policy         | Behaviour                                   |
+| -------------- | ------------------------------------------- |
+| allkeys-lru    | LRU across all keys                         |
+| allkeys-lfu    | LFU across all keys                         |
+| allkeys-random | Randomly removes any key                    |
+| volatile-lru   | LRU among keys with TTL                     |
+| volatile-ttl   | Evicts keys with the shortest remaining TTL |
+| noeviction     | Rejects writes when memory limit is reached |
+
+*Note: These settings are server-wide. Don't change production configuration without considering other Redis workloads.*
+
+### Sliding TTL or Refresh-on-Access
+
+If an organization is accessed every 10 seconds and we reset its TTL to 5 minutes after each access, it can remain cached as long as it continues to be accessed.
+
+Two approaches:
+
+1. Fixed TTL
+`await redis.set("org:123", data, { EX: 300 });`
+
+- Expires 5 minutes after initial insertion.
+- Accessing it doesn't automatically extend expiration.
+
+2. Sliding TTL
+`await redis.expire("org:123", 300);`
+
+- Every access extends expiration by another 5 minutes.
+- Frequently accessed data stays cached longer.
+
+When to use which?
+- Fixed TTL: Good when you want predictable cache expiration.
+- Sliding TTL: Good when frequently accessed data should remain cached.
 
 
+
+Day 3 — Advanced caching
+
+Write-through, write-behind, cache consistency and invalidation strategies
+
+Day 4 — Redis data structures
+
+Strings, Hashes, Lists, Sets and Sorted Sets in practice
+
+Day 5 — Rate limiting
+
+Fixed window, sliding window, token bucket and Express middleware
+
+Day 6 — Distributed locking
+
+Redis locks, SET NX EX, safe release and concurrency
+
+Day 7 — Revision and interview
+
+Practical scenarios, debugging and mock interview

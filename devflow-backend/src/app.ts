@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import userRoute from "./routes/user.routes";
+import orgRoutes from "./routes/organization.routes";
 
 // Creates the Express application.
 // Registers middleware.
@@ -22,5 +23,6 @@ app.get("/api/health", (req, res) => {
 });
 
 app.use("/api/users", userRoute);
+app.use("/api/organization",orgRoutes);
 
 export default app;
